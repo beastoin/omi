@@ -90,6 +90,36 @@ def get_current_user_uid(
     return uid
 
 
+def get_current_user_uid_no_byok_validation(
+    authorization: str = Header(None),
+    x_app_platform: str = Header(None, alias='X-App-Platform'),
+):
+    """Auth dependency that skips BYOK fingerprint validation.
+
+    Used ONLY by the BYOK activation/deactivation endpoints — those need to
+    update Firestore fingerprints, so validating the old fingerprints first
+    would deadlock key rotation.
+    """
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization header not found")
+    elif len(str(authorization).split(' ')) != 2:
+        raise HTTPException(status_code=401, detail="Invalid authorization token")
+
+    try:
+        token = authorization.split(' ')[1]
+        uid = verify_token(token)
+    except InvalidIdTokenError as e:
+        logger.error(e)
+        raise HTTPException(status_code=401, detail="Invalid authorization token")
+
+    try:
+        record_user_platform(uid, x_app_platform)
+    except Exception as e:  # noqa: BLE001 — telemetry must never fail the request
+        logger.debug("record_user_platform swallowed error for uid=%s: %s", uid, e)
+
+    return uid
+
+
 def _verify_ws_auth(authorization: str) -> str:
     """Common WebSocket auth — verifies token, returns uid.
 

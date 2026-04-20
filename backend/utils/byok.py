@@ -144,15 +144,20 @@ def _check_byok_validity(uid: str) -> Optional[str]:
     Returns an error message string on failure, or ``None`` on success.
 
     Behaviour:
-    - If user is NOT BYOK-active → clears any BYOK headers from the context
-      (so they are never used) and returns None.
+    - If NO BYOK headers on this request → returns None immediately without
+      touching Firestore.  This is the fast path for mobile and non-BYOK users.
+    - If user is NOT BYOK-active but sends headers → clears headers from the
+      context (so they are never used) and returns None.
     - If user IS BYOK-active **and sends BYOK headers** → every header key's
       SHA-256 must match the enrolled fingerprint.  Mismatch → error string.
-    - If user IS BYOK-active **but sends NO BYOK headers** (e.g. mobile app
-      which has no BYOK support) → clears context and falls through to normal
-      Omi keys + normal subscription enforcement.  The user can still use the
-      service on the platform that doesn't support BYOK.
     """
+    # Fast path: no BYOK headers on this request → nothing to validate.
+    # Avoids hitting Firestore/cache for the vast majority of requests
+    # (mobile, non-BYOK desktop).
+    request_keys = _byok_ctx.get() or {}
+    if not request_keys:
+        return None
+
     import database.users as users_db
 
     state = get_cached_byok_state(uid)
@@ -173,17 +178,8 @@ def _check_byok_validity(uid: str) -> Optional[str]:
             _byok_ctx.set(None)
         return None
 
-    # BYOK-active user.
-    request_keys = _byok_ctx.get() or {}
-
-    if not request_keys:
-        # BYOK-active but NO headers at all (e.g. mobile app).
-        # Fall through to normal Omi keys + normal subscription enforcement.
-        # Don't block — the user just isn't using BYOK on this platform.
-        _byok_ctx.set(None)
-        return None
-
-    # Headers present — validate every enrolled provider fingerprint.
+    # BYOK-active user with headers present — validate every enrolled
+    # provider fingerprint.
     stored_fingerprints = state.get('fingerprints', {})
 
     for provider, stored_fp in stored_fingerprints.items():

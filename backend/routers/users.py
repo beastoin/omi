@@ -772,7 +772,7 @@ class BYOKActivateRequest(BaseModel):
 
 
 @router.post('/v1/users/me/byok-active', tags=['v1'])
-def activate_byok_endpoint(data: BYOKActivateRequest, uid: str = Depends(auth.get_current_user_uid)):
+def activate_byok_endpoint(data: BYOKActivateRequest, uid: str = Depends(auth.get_current_user_uid_no_byok_validation)):
     """Flip the user onto the BYOK free plan.
 
     The client sends SHA-256 fingerprints of the 4 provider keys so we can
@@ -798,7 +798,7 @@ def activate_byok_endpoint(data: BYOKActivateRequest, uid: str = Depends(auth.ge
 
 
 @router.delete('/v1/users/me/byok-active', tags=['v1'])
-def deactivate_byok_endpoint(uid: str = Depends(auth.get_current_user_uid)):
+def deactivate_byok_endpoint(uid: str = Depends(auth.get_current_user_uid_no_byok_validation)):
     """Drop the user off the BYOK free plan (keys were cleared client-side)."""
     users_db.clear_byok_active(uid)
     invalidate_byok_state_cache(uid)
