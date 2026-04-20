@@ -4,6 +4,7 @@ import time
 
 from fastapi import Depends, Header, HTTPException, WebSocketException
 from fastapi import Request
+from starlette.websockets import WebSocket
 from firebase_admin import auth
 from firebase_admin.auth import InvalidIdTokenError
 import logging
@@ -11,6 +12,7 @@ import redis as redis_pkg
 
 from database.redis_db import check_rate_limit, try_acquire_listen_lock
 from database.users import record_user_platform
+from utils.byok import extract_byok_from_websocket, set_byok_keys, validate_byok_request, validate_byok_websocket
 from utils.rate_limit_config import RATE_POLICIES, RATE_LIMIT_SHADOW, get_effective_limit
 
 logger = logging.getLogger(__name__)
@@ -83,8 +85,6 @@ def get_current_user_uid(
     # HTTP endpoints.  Runs after auth so we have the uid.  Lightweight: uses
     # a 30-second TTL cache for Firestore state, and is a no-op when no BYOK
     # headers are present.
-    from utils.byok import validate_byok_request
-
     validate_byok_request(uid)
 
     return uid
@@ -112,16 +112,31 @@ def _verify_ws_auth(authorization: str) -> str:
         raise WebSocketException(code=1008, reason="Auth error")
 
 
-def get_current_user_uid_ws_listen(authorization: str = Header(None)):
+def get_current_user_uid_ws_listen(
+    websocket: WebSocket = None,
+    authorization: str = Header(None),
+):
     """WebSocket auth for /v4/listen — NO rate limiting.
 
     Mobile apps reconnect legitimately on network switch / backgrounding,
     so the per-UID rate limiter must not block them.
 
-    BYOK validation is done inside _stream_handler after header extraction
-    (BaseHTTPMiddleware doesn't fire for WebSocket scope).
+    Also extracts BYOK headers from the WS upgrade request and validates
+    them against Firestore enrollment (BaseHTTPMiddleware doesn't fire for
+    WebSocket scope, so this is the shared entry point for WS BYOK).
     """
-    return _verify_ws_auth(authorization)
+    uid = _verify_ws_auth(authorization)
+
+    # Extract BYOK headers from the WS upgrade request and validate.
+    if websocket is not None:
+        byok_keys = extract_byok_from_websocket(websocket)
+        if byok_keys:
+            set_byok_keys(byok_keys)
+        error = validate_byok_websocket(uid)
+        if error:
+            raise WebSocketException(code=4003, reason=error)
+
+    return uid
 
 
 def get_current_user_uid_ws(authorization: str = Header(None)):

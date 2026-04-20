@@ -91,6 +91,7 @@ from utils.other.storage import (
 )
 from utils.webhooks import webhook_first_time_setup
 from database.action_items import get_action_items as get_standalone_action_items
+from utils.byok import has_byok_keys, invalidate_byok_state_cache
 import logging
 
 logger = logging.getLogger(__name__)
@@ -792,8 +793,6 @@ def activate_byok_endpoint(data: BYOKActivateRequest, uid: str = Depends(auth.ge
                 status_code=400, detail=f"Invalid fingerprint for {provider}: expected lowercase hex SHA-256 (64 chars)"
             )
     users_db.set_byok_active(uid, data.fingerprints)
-    from utils.byok import invalidate_byok_state_cache
-
     invalidate_byok_state_cache(uid)
     return {"active": True}
 
@@ -802,8 +801,6 @@ def activate_byok_endpoint(data: BYOKActivateRequest, uid: str = Depends(auth.ge
 def deactivate_byok_endpoint(uid: str = Depends(auth.get_current_user_uid)):
     """Drop the user off the BYOK free plan (keys were cleared client-side)."""
     users_db.clear_byok_active(uid)
-    from utils.byok import invalidate_byok_state_cache
-
     invalidate_byok_state_cache(uid)
     return {"active": False}
 
@@ -833,8 +830,6 @@ def get_user_subscription_endpoint(
     # BYOK free plan: user supplies their own OpenAI/Anthropic/Gemini/Deepgram keys.
     # Only return unlimited when the request actually carries BYOK headers (desktop).
     # Mobile (no BYOK headers) should see the real subscription even if BYOK is active.
-    from utils.byok import has_byok_keys
-
     if users_db.is_byok_active(uid) and has_byok_keys():
         return UserSubscriptionResponse(
             subscription=_byok_unlimited_subscription(),
