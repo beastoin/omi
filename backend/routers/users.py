@@ -831,8 +831,11 @@ def get_user_subscription_endpoint(
 ):
     """Gets the user's subscription plan and usage."""
     # BYOK free plan: user supplies their own OpenAI/Anthropic/Gemini/Deepgram keys.
-    # Skip Stripe entirely and return an unlimited plan tagged with the `byok` feature.
-    if users_db.is_byok_active(uid):
+    # Only return unlimited when the request actually carries BYOK headers (desktop).
+    # Mobile (no BYOK headers) should see the real subscription even if BYOK is active.
+    from utils.byok import has_byok_keys
+
+    if users_db.is_byok_active(uid) and has_byok_keys():
         return UserSubscriptionResponse(
             subscription=_byok_unlimited_subscription(),
             transcription_seconds_used=0,
@@ -1038,6 +1041,21 @@ def get_user_chat_usage_quota(uid: str = Depends(auth.get_current_user_uid)):
 
     Used by the desktop app. Mobile uses the subscription endpoint instead.
     """
+    # BYOK free plan: user brings their own keys, so there's no Omi-side cost
+    # to meter. Only return unlimited when BYOK headers are on the request (desktop).
+    # Mobile (no headers) should see real quota.
+    if users_db.is_byok_active(uid) and has_byok_keys():
+        return ChatUsageQuota(
+            plan='Free (BYOK)',
+            plan_type=PlanType.unlimited.value,
+            unit=ChatQuotaUnit.questions,
+            used=0.0,
+            limit=None,
+            percent=0.0,
+            allowed=True,
+            reset_at=None,
+        )
+
     snapshot = get_chat_quota_snapshot(uid)
     plan = snapshot['plan']
 
