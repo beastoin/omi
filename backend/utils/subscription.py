@@ -6,7 +6,9 @@ import stripe
 import database.users as users_db
 import database.user_usage as user_usage_db
 from database.announcements import _compare_versions
+from fastapi import HTTPException
 from models.users import PlanType, SubscriptionStatus, Subscription, PlanLimits
+from utils.byok import get_byok_key
 from utils.log_sanitizer import sanitize
 import logging
 
@@ -268,7 +270,12 @@ def get_chat_quota_snapshot(uid: str) -> dict:
 
 def enforce_chat_quota(uid: str) -> None:
     """Raise HTTPException(402) if the user is past their monthly chat cap."""
-    from fastapi import HTTPException
+    # BYOK users pay their own LLM provider — no Omi-side cost to cap.
+    # Require an LLM provider key on this request (not just any BYOK header)
+    # so a user can't activate with fake fingerprints or send only x-byok-deepgram
+    # to bypass chat quota while chat falls back to Omi's OpenAI/Anthropic keys.
+    if users_db.is_byok_active(uid) and (get_byok_key('openai') or get_byok_key('anthropic')):
+        return
 
     snapshot = get_chat_quota_snapshot(uid)
     if snapshot['allowed']:
@@ -505,7 +512,9 @@ def has_transcription_credits(uid: str) -> bool:
     Checks if a user has transcribing credits by verifying their valid subscription and usage.
     """
     # BYOK users pay Deepgram directly — there's no Omi-side transcription quota to enforce.
-    if users_db.is_byok_active(uid):
+    # Require the Deepgram header on this request so a user can't activate BYOK
+    # with fake fingerprints then omit x-byok-deepgram to ride Omi's key.
+    if users_db.is_byok_active(uid) and get_byok_key('deepgram'):
         return True
 
     subscription = users_db.get_user_valid_subscription(uid)
@@ -530,7 +539,8 @@ def get_remaining_transcription_seconds(uid: str) -> int | None:
     Used for freemium auto-switch to on-device transcription.
     """
     # BYOK: user brings their own Deepgram — no Omi quota, no freemium threshold.
-    if users_db.is_byok_active(uid):
+    # Require the Deepgram header to prevent fake-fingerprint abuse.
+    if users_db.is_byok_active(uid) and get_byok_key('deepgram'):
         return None
 
     subscription = users_db.get_user_valid_subscription(uid)
