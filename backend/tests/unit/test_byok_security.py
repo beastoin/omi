@@ -279,7 +279,6 @@ class TestGeminiKeyNotInUrl:
 
 class TestChatQuotaBYOKBypass:
     @patch('utils.byok.get_byok_key')
-    @patch('utils.subscription.CHAT_CAP_ENFORCEMENT_ENABLED', True)
     @patch('utils.subscription.users_db')
     def test_enforce_chat_quota_bypasses_for_byok_with_openai_key(self, mock_users_db, mock_get_key):
         mock_users_db.is_byok_active.return_value = True
@@ -290,7 +289,6 @@ class TestChatQuotaBYOKBypass:
         mock_users_db.is_byok_active.assert_called_once_with('byok-user-uid')
 
     @patch('utils.byok.get_byok_key', return_value=None)
-    @patch('utils.subscription.CHAT_CAP_ENFORCEMENT_ENABLED', True)
     @patch('utils.subscription.users_db')
     @patch('utils.subscription.get_chat_quota_snapshot')
     def test_enforce_chat_quota_enforces_when_byok_active_but_no_llm_headers(
@@ -316,7 +314,6 @@ class TestChatQuotaBYOKBypass:
         assert exc_info.value.status_code == 402
 
     @patch('utils.byok.get_byok_key')
-    @patch('utils.subscription.CHAT_CAP_ENFORCEMENT_ENABLED', True)
     @patch('utils.subscription.users_db')
     @patch('utils.subscription.get_chat_quota_snapshot')
     def test_enforce_chat_quota_enforces_when_only_deepgram_header(self, mock_snapshot, mock_users_db, mock_get_key):
@@ -340,7 +337,6 @@ class TestChatQuotaBYOKBypass:
             enforce_chat_quota('partial-byok-uid')
         assert exc_info.value.status_code == 402
 
-    @patch('utils.subscription.CHAT_CAP_ENFORCEMENT_ENABLED', True)
     @patch('utils.subscription.users_db')
     @patch('utils.subscription.get_chat_quota_snapshot')
     def test_enforce_chat_quota_still_enforces_for_non_byok(self, mock_snapshot, mock_users_db):
@@ -654,7 +650,6 @@ class TestMiddlewareIsolation:
 
 class TestQuotaBoundaryTests:
     @patch('utils.byok.get_byok_key')
-    @patch('utils.subscription.CHAT_CAP_ENFORCEMENT_ENABLED', True)
     @patch('utils.subscription.users_db')
     def test_chat_quota_bypasses_with_anthropic_key_only(self, mock_users_db, mock_get_key):
         """Anthropic-only BYOK should also bypass chat quota."""
@@ -665,7 +660,6 @@ class TestQuotaBoundaryTests:
         enforce_chat_quota('anthropic-byok-uid')  # Should not raise
 
     @patch('utils.byok.get_byok_key', return_value=None)
-    @patch('utils.subscription.CHAT_CAP_ENFORCEMENT_ENABLED', True)
     @patch('utils.subscription.users_db')
     @patch('utils.subscription.get_chat_quota_snapshot')
     def test_chat_quota_at_exact_limit(self, mock_snapshot, mock_users_db, _mock_get_key):
@@ -689,7 +683,6 @@ class TestQuotaBoundaryTests:
         assert exc_info.value.status_code == 402
 
     @patch('utils.byok.get_byok_key', return_value=None)
-    @patch('utils.subscription.CHAT_CAP_ENFORCEMENT_ENABLED', True)
     @patch('utils.subscription.users_db')
     @patch('utils.subscription.get_chat_quota_snapshot')
     def test_chat_quota_just_below_limit(self, mock_snapshot, mock_users_db, _mock_get_key):
