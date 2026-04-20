@@ -974,3 +974,102 @@ class TestBYOKStateCache:
         from utils.byok import _byok_state_cache, _BYOK_STATE_CACHE_MAX
 
         assert _BYOK_STATE_CACHE_MAX == 1024  # Verify constant
+
+
+# ---------------------------------------------------------------------------
+# 17. Auth dependency integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestAuthDependencyBYOKIntegration:
+    """Verify shared auth dependencies call (or skip) BYOK validation."""
+
+    @patch('utils.other.endpoints.validate_byok_request')
+    @patch('utils.other.endpoints.record_user_platform')
+    @patch('utils.other.endpoints.verify_token', return_value='uid-123')
+    def test_get_current_user_uid_calls_byok_validation(self, _mock_verify, _mock_platform, mock_validate):
+        from utils.other.endpoints import get_current_user_uid
+
+        uid = get_current_user_uid(authorization='Bearer fake-token')
+        assert uid == 'uid-123'
+        mock_validate.assert_called_once_with('uid-123')
+
+    @patch('utils.other.endpoints.record_user_platform')
+    @patch('utils.other.endpoints.verify_token', return_value='uid-456')
+    def test_no_byok_validation_skips_validate(self, _mock_verify, _mock_platform):
+        """get_current_user_uid_no_byok_validation must NOT call validate_byok_request."""
+        from utils.other.endpoints import get_current_user_uid_no_byok_validation
+
+        with patch('utils.other.endpoints.validate_byok_request') as mock_validate:
+            uid = get_current_user_uid_no_byok_validation(authorization='Bearer fake-token')
+            assert uid == 'uid-456'
+            mock_validate.assert_not_called()
+
+
+class TestWSAuthDependencyBYOK:
+    """Verify get_current_user_uid_ws_listen extracts BYOK and validates."""
+
+    def _make_ws(self, headers: dict):
+        ws = MagicMock()
+        ws.headers = headers
+        return ws
+
+    @patch('utils.other.endpoints.validate_byok_websocket', return_value=None)
+    @patch('utils.other.endpoints._verify_ws_auth', return_value='ws-uid')
+    def test_ws_listen_with_byok_headers_validates(self, _mock_auth, mock_validate):
+        from utils.other.endpoints import get_current_user_uid_ws_listen
+
+        ws = self._make_ws({'x-byok-openai': 'sk-test'})
+        uid = get_current_user_uid_ws_listen(websocket=ws, authorization='Bearer tok')
+        assert uid == 'ws-uid'
+        mock_validate.assert_called_once_with('ws-uid')
+
+    @patch('utils.other.endpoints.validate_byok_websocket', return_value=None)
+    @patch('utils.other.endpoints._verify_ws_auth', return_value='ws-uid')
+    def test_ws_listen_no_headers_passes(self, _mock_auth, mock_validate):
+        from utils.other.endpoints import get_current_user_uid_ws_listen
+
+        ws = self._make_ws({})
+        uid = get_current_user_uid_ws_listen(websocket=ws, authorization='Bearer tok')
+        assert uid == 'ws-uid'
+        mock_validate.assert_called_once()
+
+    @patch('utils.other.endpoints.validate_byok_websocket', return_value='fingerprint mismatch')
+    @patch('utils.other.endpoints._verify_ws_auth', return_value='ws-uid')
+    def test_ws_listen_validation_failure_raises_4003(self, _mock_auth, _mock_validate):
+        from fastapi import WebSocketException
+        from utils.other.endpoints import get_current_user_uid_ws_listen
+
+        ws = self._make_ws({'x-byok-openai': 'wrong-key'})
+        with pytest.raises(WebSocketException) as exc_info:
+            get_current_user_uid_ws_listen(websocket=ws, authorization='Bearer tok')
+        assert exc_info.value.code == 4003
+
+
+class TestActivationCacheInvalidation:
+    """Verify activate/deactivate endpoints invalidate BYOK state cache."""
+
+    @patch('routers.users.invalidate_byok_state_cache')
+    @patch('routers.users.users_db')
+    def test_activate_invalidates_cache(self, mock_users_db, mock_invalidate):
+        from routers.users import activate_byok_endpoint, BYOKActivateRequest
+
+        fingerprints = {
+            'openai': hashlib.sha256(b'sk-o').hexdigest(),
+            'anthropic': hashlib.sha256(b'sk-a').hexdigest(),
+            'gemini': hashlib.sha256(b'sk-g').hexdigest(),
+            'deepgram': hashlib.sha256(b'sk-d').hexdigest(),
+        }
+        data = BYOKActivateRequest(fingerprints=fingerprints)
+        result = activate_byok_endpoint(data=data, uid='uid-act')
+        assert result == {'active': True}
+        mock_invalidate.assert_called_once_with('uid-act')
+
+    @patch('routers.users.invalidate_byok_state_cache')
+    @patch('routers.users.users_db')
+    def test_deactivate_invalidates_cache(self, mock_users_db, mock_invalidate):
+        from routers.users import deactivate_byok_endpoint
+
+        result = deactivate_byok_endpoint(uid='uid-deact')
+        assert result == {'active': False}
+        mock_invalidate.assert_called_once_with('uid-deact')
