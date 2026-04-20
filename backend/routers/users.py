@@ -55,7 +55,9 @@ from models.users import (
     ChatQuotaUnit,
     WebhookType,
     UserSubscriptionResponse,
+    Subscription,
     SubscriptionPlan,
+    SubscriptionStatus,
     PlanType,
     PricingOption,
 )
